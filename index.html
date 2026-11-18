@@ -37,7 +37,7 @@ const ISIN = (new URLSearchParams(location.search).get("isin")||"").trim().toUpp
 document.getElementById("isin").textContent = ISIN;
 (async()=>{
   try{
-    const r = await fetch(API+"?isin="+encodeURIComponent(ISIN)+"&v="+new Date().toISOString().slice(0,10));
+    const r = await fetch(API+"?isin="+encodeURIComponent(ISIN)+"&v="+new Date().toISOString().slice(0,10)+"-2");
     const PAYLOAD = JSON.parse(await r.text());
     if(PAYLOAD.error){ document.getElementById("titolo").textContent=""; document.getElementById("err").textContent=PAYLOAD.error; return; }
     const CERT = PAYLOAD.cert, SERIES = PAYLOAD.series.filter(s=>s.data && s.data.length);
