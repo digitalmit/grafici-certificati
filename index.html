@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="it"><head><meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Grafico certificato</title>
+<script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
+<style>
+  :root{--bg:#0b0e14;--ink:#e8edf6;--muted:#8a93a6;--line:#1c2230;--barriera:#e5484d}
+  *{box-sizing:border-box} html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Inter,Helvetica,Arial,sans-serif}
+  .wrap{max-width:1180px;margin:0 auto;padding:26px 22px 40px}
+  .head{display:flex;flex-wrap:wrap;align-items:baseline;gap:10px 16px;margin-bottom:4px}
+  .isin{font-weight:700;font-size:15px;letter-spacing:.3px;color:var(--muted)}
+  h1{font-size:22px;margin:0;font-weight:650}
+  .meta{display:flex;flex-wrap:wrap;gap:8px 10px;margin:14px 0 6px}
+  .chip{font-size:12px;color:var(--muted);background:#121724;border:1px solid var(--line);
+    border-radius:999px;padding:5px 11px;white-space:nowrap}
+  .chip b{color:var(--ink);font-weight:600} .chip.red b{color:var(--barriera)}
+  #chart{width:100%;height:560px;margin-top:10px}
+  .foot{display:flex;flex-wrap:wrap;gap:10px 18px;align-items:center;margin-top:8px;padding-top:14px;
+    border-top:1px solid var(--line);font-size:13px;color:var(--muted)}
+  .foot .dot{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:7px;vertical-align:middle}
+  .foot b{color:var(--ink);font-weight:600} .asof{font-weight:600;color:var(--ink);margin-right:6px}
+  .warn{margin-top:16px;font-size:12px;color:#c08a3a} .err{margin-top:30px;color:#e5484d}
+</style></head>
+<body><div class="wrap">
+  <div class="head"><span class="isin" id="isin"></span><h1 id="titolo">Carico…</h1></div>
+  <div class="meta" id="meta"></div>
+  <div id="chart"></div>
+  <div class="foot" id="foot"></div>
+  <div class="warn" id="warn"></div>
+  <div class="err" id="err"></div>
+</div>
+<script>
+const API = "https://bzhyqiqvquvhywkdntjw.supabase.co/functions/v1/grafico";
+const fmtD = iso => { if(!iso) return "—"; const [y,m,d]=iso.split("-"); return d+"/"+m+"/"+y; };
+const ISIN = (new URLSearchParams(location.search).get("isin")||"").trim().toUpperCase();
+document.getElementById("isin").textContent = ISIN;
+(async()=>{
+  try{
+    const r = await fetch(API+"?isin="+encodeURIComponent(ISIN));
+    const PAYLOAD = JSON.parse(await r.text());
+    if(PAYLOAD.error){ document.getElementById("titolo").textContent=""; document.getElementById("err").textContent=PAYLOAD.error; return; }
+    const CERT = PAYLOAD.cert, SERIES = PAYLOAD.series.filter(s=>s.data && s.data.length);
+    document.getElementById("titolo").textContent = (CERT.category||"Certificato") + (CERT.issuer? " · "+CERT.issuer : "");
+    const finali = SERIES.map(s=>s.data[s.data.length-1][1]);
+    const worstIdx = finali.length ? finali.indexOf(Math.min(...finali)) : -1;
+    const bc = CERT.barriera_capitale_pct, bced = CERT.barriera_cedola_pct;
+    document.getElementById("meta").innerHTML = [
+      '<span class="chip">Strike date <b>'+fmtD(CERT.fixing_date)+'</b></span>',
+      '<span class="chip">Strike <b>100%</b></span>',
+      bc!=null? '<span class="chip red">Barriera capitale <b>'+bc+'%</b></span>' : "",
+      bced!=null? '<span class="chip">Barriera cedola <b>'+bced+'%</b></span>' : "",
+      (worstIdx>=0)? '<span class="chip">Worst-of <b>'+SERIES[worstIdx].nome+'</b></span>' : "",
+      CERT.maturity_date? '<span class="chip">Scadenza <b>'+fmtD(CERT.maturity_date)+'</b></span>' : "",
+    ].join("");
+    const chart = echarts.init(document.getElementById("chart"), null, {renderer:"canvas"});
+    const markData = [];
+    markData.push({yAxis:100, lineStyle:{color:"#c9d2e3",type:"dotted",width:1.4}, label:{formatter:"Strike 100%",color:"#c9d2e3",position:"insideEndTop",fontSize:11}});
+    if(bc!=null) markData.push({yAxis:bc, lineStyle:{color:"#e5484d",width:2}, label:{formatter:"Barriera "+bc+"%",color:"#e5484d",position:"insideEndTop",fontSize:11,fontWeight:600}});
+    if(bced!=null) markData.push({yAxis:bced, lineStyle:{color:"#9aa6bd",type:"dashed",width:1.2}, label:{formatter:"Cedola "+bced+"%",color:"#9aa6bd",position:"insideEndTop",fontSize:11}});
+    const echSeries = SERIES.map((s,i)=>({
+      name:s.nome, type:"line", smooth:true, symbol:"none",
+      lineStyle:{width: i===worstIdx?2.6:1.8, color:s.col, shadowColor:s.col, shadowBlur: i===worstIdx?8:0},
+      emphasis:{focus:"series"},
+      endLabel:{show:true, formatter:p=>Math.round(p.value[1])+"%", color:s.col, fontWeight:600, fontSize:12},
+      data:s.data,
+      markLine: i===0?{silent:true,symbol:"none",data:markData}:undefined,
+      markArea: (i===0 && bc!=null)?{silent:true,itemStyle:{color:"rgba(229,72,77,0.07)"},data:[[{yAxis:0},{yAxis:bc}]]}:undefined,
+    }));
+    chart.setOption({
+      backgroundColor:"transparent", color:SERIES.map(s=>s.col),
+      grid:{left:8,right:54,top:46,bottom:72,containLabel:true},
+      legend:{top:6,left:0,icon:"roundRect",itemWidth:18,itemHeight:4,textStyle:{color:"#cfd6e4",fontSize:13},inactiveColor:"#4a5565"},
+      tooltip:{trigger:"axis",backgroundColor:"rgba(14,18,27,0.95)",borderColor:"#232a3a",textStyle:{color:"#e8edf6"},
+        valueFormatter:v=>Number(v).toFixed(1)+"%",axisPointer:{type:"line",lineStyle:{color:"#2a3346"}}},
+      xAxis:{type:"time",boundaryGap:false,axisLine:{lineStyle:{color:"#2a3346"}},axisLabel:{color:"#8a93a6",fontSize:11},splitLine:{show:false}},
+      yAxis:{type:"value",axisLabel:{color:"#8a93a6",fontSize:11,formatter:"{value}%"},splitLine:{lineStyle:{color:"#161c28"}},
+        min:v=>Math.floor((v.min-6)/10)*10, max:v=>Math.ceil((v.max+4)/10)*10},
+      dataZoom:[{type:"inside",throttle:50},
+        {type:"slider",height:16,bottom:24,backgroundColor:"transparent",borderColor:"#232a3a",fillerColor:"rgba(76,141,255,0.12)",
+         handleStyle:{color:"#4c8dff"},dataBackground:{lineStyle:{color:"#2a3346"},areaStyle:{color:"#141a26"}},textStyle:{color:"#8a93a6"}}],
+      animationDuration:900, series:echSeries
+    });
+    addEventListener("resize",()=>chart.resize());
+    if(SERIES.length){
+      const last = SERIES[0].data[SERIES[0].data.length-1][0];
+      document.getElementById("foot").innerHTML = '<span class="asof">Dati al '+fmtD(last)+'</span>' +
+        SERIES.map((s,i)=>'<span><span class="dot" style="background:'+s.col+'"></span>'+s.nome+' <b>'+Math.round(finali[i])+'%</b></span>').join("");
+    }
+    const mancanti = PAYLOAD.series.filter(s=>!(s.data&&s.data.length)).map(s=>s.nome);
+    if(mancanti.length) document.getElementById("warn").textContent =
+      "Serie non disponibile su Yahoo per: " + mancanti.join(", ") + " (manca il ticker Yahoo o la cronologia).";
+  }catch(e){ document.getElementById("titolo").textContent=""; document.getElementById("err").textContent="Errore nel caricamento dati: "+e.message; }
+})();
+</script></body></html>
